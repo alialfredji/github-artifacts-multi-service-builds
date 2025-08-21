@@ -8,8 +8,8 @@ on:
       max_concurrent:
         description: 'Maximum number of services to build in parallel (default: 5)'
         required: false
-        default: 5
-        type: number
+        default: '5'
+        type: string
 
 jobs:
   discover-services:
@@ -34,7 +34,7 @@ jobs:
     strategy:
       matrix:
         service: ${{ fromJson(needs.discover-services.outputs.services) }}
-      max-parallel: ${{ github.event.inputs.max_concurrent || 5 }}
+      max-parallel: ${{ fromJSON(github.event.inputs.max_concurrent) || 5 }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -43,12 +43,20 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '18'
+        cache: 'npm'
+        cache-dependency-path: ${{ matrix.service }}/package-lock.json
+        
+    - name: Install dependencies
+      run: |
+        echo "Installing dependencies for ${{ matrix.service }}..."
+        cd ${{ matrix.service }}
+        npm ci
+        cd ..
         
     - name: Build service
       run: |
         echo "Building ${{ matrix.service }}..."
         cd ${{ matrix.service }}
-        npm install
         npm run build
         echo "${{ matrix.service }}-build-${{ github.ref_name }}-${{ github.sha }}" > dist/build-id.txt
         cd ..
