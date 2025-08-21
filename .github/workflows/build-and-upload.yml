@@ -58,4 +58,4 @@ jobs:
       with:
         name: ${{ matrix.service }}-build-${{ github.ref_name }}-${{ github.sha }}
         path: ${{ matrix.service }}/dist/
-        retention-days: 30
+        retention-days: 90
