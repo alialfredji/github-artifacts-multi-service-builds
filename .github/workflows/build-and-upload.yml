@@ -8,8 +8,8 @@ on:
       max_concurrent:
         description: 'Maximum number of services to build in parallel (default: 5)'
         required: false
-        default: '5'
-        type: string
+        default: 5
+        type: number
 
 jobs:
   discover-services:
