@@ -25,14 +25,17 @@ jobs:
       run: |
         SERVICES=$(find . -maxdepth 2 -name "package.json" -not -path "./node_modules/*" | sed 's|/package.json||' | sed 's|^\./||' | sort)
         echo "Found services: $SERVICES"
-        echo "services=$SERVICES" >> $GITHUB_OUTPUT
+        
+        # Convert to JSON array format
+        SERVICES_JSON=$(echo "$SERVICES" | tr ' ' '\n' | jq -R . | jq -s .)
+        echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
         
   build-and-upload:
     needs: discover-services
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        service: ${{ fromJson(format('[{0}]', needs.discover-services.outputs.services)) }}
+        service: ${{ fromJson(needs.discover-services.outputs.services) }}
       max-parallel: ${{ github.event.inputs.max_concurrent || 5 }}
     steps:
     - name: Checkout code
