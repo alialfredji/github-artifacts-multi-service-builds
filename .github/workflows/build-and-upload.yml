@@ -23,11 +23,9 @@ jobs:
     - name: Find all services
       id: find-services
       run: |
-        SERVICES=$(find . -maxdepth 2 -name "package.json" -not -path "./node_modules/*" | sed 's|/package.json||' | sed 's|^\./||' | sort)
-        echo "Found services: $SERVICES"
-        
-        # Convert to JSON array format
-        SERVICES_JSON=$(echo "$SERVICES" | tr ' ' '\n' | jq -R . | jq -s .)
+        # Find all directories that contain package.json files and create JSON array
+        SERVICES_JSON=$(find . -maxdepth 2 -name "package.json" -not -path "./node_modules/*" | sed 's|/package.json||' | sed 's|^\./||' | sort | jq -R -s -c 'split("\n")[:-1]')
+        echo "Found services: $SERVICES_JSON"
         echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
         
   build-and-upload:
