@@ -39,14 +39,19 @@ jobs:
         echo "Looking for latest build of $SERVICE_NAME from $BRANCH_NAME branch..."
         
         # Find the latest successful build for this service and branch
+        # Using exact pattern: {service}-build-{branch}-{commit}
         LATEST_BUILD=$(gh run list --limit 50 --json artifacts,headBranch,headSha,conclusion,createdAt \
           | jq -r --arg service "$SERVICE_NAME" --arg branch "$BRANCH_NAME" \
           '.[] | select(.conclusion == "success" and .headBranch == $branch) | 
-           .artifacts[] | select(.name | startswith($service + "-build-")) | .name' \
+           .artifacts[] | select(.name | startswith($service + "-build-" + $branch + "-")) | .name' \
           | head -1)
         
         if [ -z "$LATEST_BUILD" ]; then
           echo "❌ No build found for $SERVICE_NAME on $BRANCH_NAME branch"
+          echo "Available artifacts:"
+          gh run list --limit 10 --json artifacts,headBranch,headSha,conclusion,createdAt \
+            | jq -r '.[] | select(.conclusion == "success") | "\(.headBranch) - \(.artifacts[].name)"' \
+            | grep -E "build-.*-$" || echo "No build artifacts found"
           exit 1
         fi
         
@@ -65,6 +70,8 @@ jobs:
       run: |
         if [ ! -f "./service-build/index.js" ]; then
           echo "❌ Build does not contain index.js"
+          echo "Available files:"
+          ls -la ./service-build/
           exit 1
         fi
         
