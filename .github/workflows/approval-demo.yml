@@ -4,11 +4,6 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
-    inputs:
-      approval_token:
-        description: 'Approval token (leave empty for initial run)'
-        required: false
-        type: string
 
 jobs:
   step-1:
@@ -35,31 +30,18 @@ jobs:
   step-3-approval:
     runs-on: ubuntu-latest
     needs: step-2
-    if: github.event.inputs.approval_token == ''
+    environment: manual-approval
     steps:
     - name: Step 3 - Manual Approval Required
       run: |
         echo "⏸️  Step 3: Manual approval required"
         echo "This step requires manual approval to continue"
-        echo ""
-        echo "To approve and continue:"
-        echo "1. Go to Actions tab"
-        echo "2. Click 'Run workflow' on this workflow"
-        echo "3. Enter any value in 'approval_token' field"
-        echo "4. Click 'Run workflow'"
-        echo ""
-        echo "Workflow will continue to steps 4 and 5 after approval."
-        
-    - name: Stop workflow waiting for approval
-      run: |
-        echo "⏸️  Workflow paused - waiting for manual approval"
-        echo "Please trigger the workflow manually with an approval_token to continue"
-        exit 1
+        echo "Please approve this deployment in the GitHub UI"
+        echo "You can add comments or reject if needed"
         
   step-4:
     runs-on: ubuntu-latest
-    needs: step-2
-    if: github.event.inputs.approval_token != ''
+    needs: step-3-approval
     steps:
     - name: Step 4 - Post-Approval Processing
       run: |
@@ -72,7 +54,6 @@ jobs:
   step-5:
     runs-on: ubuntu-latest
     needs: step-4
-    if: github.event.inputs.approval_token != ''
     steps:
     - name: Step 5 - Final Deployment
       run: |
