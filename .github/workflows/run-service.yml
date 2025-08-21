@@ -38,24 +38,25 @@ jobs:
         
         echo "Looking for latest build of $SERVICE_NAME from $BRANCH_NAME branch..."
         
-        # Find the latest successful build for this service and branch
-        # Using exact pattern: {service}-build-{branch}-{commit}
-        LATEST_BUILD=$(gh run list --limit 50 --json artifacts,headBranch,headSha,conclusion,createdAt \
-          | jq -r --arg service "$SERVICE_NAME" --arg branch "$BRANCH_NAME" \
-          '.[] | select(.conclusion == "success" and .headBranch == $branch) | 
-           .artifacts[] | select(.name | startswith($service + "-build-" + $branch + "-")) | .name' \
-          | head -1)
+        # Use GitHub API to find the latest artifact by updated_at timestamp
+        LATEST_BUILD=$(gh api repos/${{ github.repository }}/actions/artifacts | \
+          jq -r --arg service "$SERVICE_NAME" --arg branch "$BRANCH_NAME" \
+          '.artifacts | sort_by(.updated_at) | reverse | .[] | 
+           select(.name | startswith($service + "-build-" + $branch + "-")) | .name' | \
+          head -1)
         
         if [ -z "$LATEST_BUILD" ]; then
           echo "❌ No build found for $SERVICE_NAME on $BRANCH_NAME branch"
-          echo "Available artifacts:"
-          gh run list --limit 10 --json artifacts,headBranch,headSha,conclusion,createdAt \
-            | jq -r '.[] | select(.conclusion == "success") | "\(.headBranch) - \(.artifacts[].name)"' \
-            | grep -E "build-.*-$" || echo "No build artifacts found"
+          echo "Available artifacts for $SERVICE_NAME:"
+          gh api repos/${{ github.repository }}/actions/artifacts | \
+            jq -r --arg service "$SERVICE_NAME" \
+            '.artifacts | sort_by(.updated_at) | reverse | .[] | 
+             select(.name | startswith($service + "-build-")) | 
+             {name, updated_at} | "\(.name) - \(.updated_at)"' || echo "No artifacts found"
           exit 1
         fi
         
-        echo "✅ Found build: $LATEST_BUILD"
+        echo "✅ Found latest build: $LATEST_BUILD"
         echo "build_name=$LATEST_BUILD" >> $GITHUB_OUTPUT
         
     - name: Download service build
