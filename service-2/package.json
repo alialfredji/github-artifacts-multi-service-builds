@@ -2,6 +2,9 @@
   "name": "service-2",
   "version": "1.0.0",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "build": "mkdir -p dist && cp src/index.js dist/"
   },

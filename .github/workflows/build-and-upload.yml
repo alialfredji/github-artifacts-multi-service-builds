@@ -16,10 +16,21 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       services: ${{ steps.find-services.outputs.services }}
+      max_parallel: ${{ steps.set-max-parallel.outputs.max_parallel }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
       
+    - name: Set max parallel value
+      id: set-max-parallel
+      run: |
+        # Handle max_concurrent input for manual dispatch, default to 5 for push triggers
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.event.inputs.max_concurrent }}" ]; then
+          echo "max_parallel=${{ github.event.inputs.max_concurrent }}" >> $GITHUB_OUTPUT
+        else
+          echo "max_parallel=5" >> $GITHUB_OUTPUT
+        fi
+        
     - name: Find all services
       id: find-services
       run: |
@@ -34,7 +45,7 @@ jobs:
     strategy:
       matrix:
         service: ${{ fromJson(needs.discover-services.outputs.services) }}
-      max-parallel: ${{ fromJSON(github.event.inputs.max_concurrent) || 5 }}
+      max-parallel: ${{ needs.discover-services.outputs.max_parallel }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -42,7 +53,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '20'
         cache: 'npm'
         cache-dependency-path: ${{ matrix.service }}/package-lock.json
         

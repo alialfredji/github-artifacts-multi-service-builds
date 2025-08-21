@@ -1,0 +1,65 @@
+name: Approval Demo Workflow
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  step-1:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Step 1 - Initial Setup
+      run: |
+        echo "🚀 Step 1: Initial setup completed"
+        echo "Timestamp: $(date)"
+        echo "Branch: ${{ github.ref_name }}"
+        echo "Commit: ${{ github.sha }}"
+        
+  step-2:
+    runs-on: ubuntu-latest
+    needs: step-1
+    steps:
+    - name: Step 2 - Data Processing
+      run: |
+        echo "📊 Step 2: Data processing started"
+        echo "Processing some data..."
+        sleep 2
+        echo "✅ Step 2: Data processing completed"
+        
+  step-3-approval:
+    runs-on: ubuntu-latest
+    needs: step-2
+    environment: manual-approval
+    steps:
+    - name: Step 3 - Manual Approval Required
+      run: |
+        echo "⏸️  Step 3: Manual approval required"
+        echo "This step requires manual approval to continue"
+        echo "Please approve this deployment in the GitHub UI"
+        echo "You can add comments or reject if needed"
+        
+  step-4:
+    runs-on: ubuntu-latest
+    needs: step-3-approval
+    steps:
+    - name: Step 4 - Post-Approval Processing
+      run: |
+        echo "🎉 Step 4: Post-approval processing"
+        echo "Approval was granted! Continuing with deployment..."
+        echo "Running post-approval tasks..."
+        sleep 3
+        echo "✅ Step 4: Post-approval processing completed"
+        
+  step-5:
+    runs-on: ubuntu-latest
+    needs: step-4
+    steps:
+    - name: Step 5 - Final Deployment
+      run: |
+        echo "🚀 Step 5: Final deployment"
+        echo "All approvals received! Deploying to production..."
+        echo "Simulating deployment process..."
+        sleep 2
+        echo "✅ Step 5: Deployment completed successfully!"
+        echo "🎉 All steps completed with manual approval!"
