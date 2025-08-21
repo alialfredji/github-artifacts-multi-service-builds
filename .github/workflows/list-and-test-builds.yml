@@ -1,0 +1,33 @@
+name: List Available Builds
+
+on:
+  workflow_dispatch:
+
+jobs:
+  list-builds:
+    runs-on: ubuntu-latest
+    steps:
+    - name: List all build artifacts
+      run: |
+        echo "Available Build Artifacts:"
+        echo "========================="
+        echo ""
+        
+        # List all artifacts from recent successful runs
+        gh run list --limit 10 --json artifacts,headBranch,headSha,conclusion,createdAt \
+          | jq -r '.[] | select(.conclusion == "success") | "\(.headBranch) - \(.headSha) - \(.artifacts[].name)"' \
+          | grep -E "build-.*-$" \
+          | sort -u
+        
+        echo ""
+        echo "GitHub CLI Commands:"
+        echo "==================="
+        echo ""
+        echo "# List all build artifacts:"
+        echo "gh run list --limit 20 --json artifacts,headBranch,headSha,conclusion,createdAt | jq -r '.[] | select(.conclusion == \"success\") | \"\\(.headBranch) - \\(.headSha) - \\(.artifacts[].name)\"' | grep -E 'build-.*-$'"
+        echo ""
+        echo "# Download latest build for a service:"
+        echo "gh run download-artifact --name 'service-1-build-main-abc123' --path './downloaded'"
+        echo ""
+        echo "# Run a downloaded service:"
+        echo "cd downloaded && node index.js"
