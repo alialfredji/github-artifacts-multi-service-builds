@@ -57,9 +57,9 @@ The workflow supports configurable parallel builds:
 
 When you push to `main` or `develop`, the workflow creates artifacts for all discovered services:
 
-- `service-1-build-{branch}-{commit}` - Contains service-1 build
-- `service-2-build-{branch}-{commit}` - Contains service-2 build
-- `service-3-build-{branch}-{commit}` - Contains service-3 build (when added)
+- `service-1-build-{run-number}-{commit}` - Contains service-1 build
+- `service-2-build-{run-number}-{commit}` - Contains service-2 build
+- `service-3-build-{run-number}-{commit}` - Contains service-3 build (when added)
 
 Each artifact contains:
 - `index.js` - The built service
@@ -79,7 +79,7 @@ gh run list --limit 20 --json artifacts,headBranch,headSha,conclusion,createdAt 
   grep -E 'build-.*-$'
 
 # Download a specific artifact
-gh run download-artifact --name 'service-1-build-main-abc123' --path './downloaded'
+gh run download-artifact --name 'service-1-build-123-abc123' --path './downloaded'
 
 # Run the downloaded service
 cd downloaded && node index.js
