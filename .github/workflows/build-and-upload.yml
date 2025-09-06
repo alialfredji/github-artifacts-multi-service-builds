@@ -30,26 +30,55 @@ jobs:
       - name: Find all services
         id: find-services
         run: |
-          echo "Discovering services..."
-          services=$(find . -name "package.json" -not -path "./node_modules/*" -not -path "./.git/*" | while read package; do
-            dir=$(dirname "$package")
-            if [ "$dir" != "." ]; then
-              # Extract service name from directory
-              service_name=$(basename "$dir")
-              echo "Found service: $service_name in $dir"
-              echo "$service_name"
-            fi
-          done | jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "🔍 Discovering services..."
+          echo "Current directory: $(pwd)"
+          echo "Directory contents:"
+          ls -la
           
-          if [ "$services" = "null" ] || [ "$services" = "[]" ]; then
-            echo "No services found!"
+          # Find all directories containing package.json (excluding root and node_modules)
+          services_json="["
+          service_count=0
+          first=true
+          
+          echo "Searching for package.json files..."
+          find_output=$(find . -name "package.json" -not -path "./node_modules/*" -not -path "./.git/*")
+          echo "Find command output:"
+          echo "$find_output"
+          
+          for package in $find_output; do
+            dir=$(dirname "$package")
+            echo "Processing package: $package, dir: $dir"
+            if [ "$dir" != "." ]; then
+              service_name=$(basename "$dir")
+              echo "✅ Found service: $service_name in $dir"
+              
+              # Add to JSON array
+              if [ "$first" = true ]; then
+                services_json="${services_json}\"${service_name}\""
+                first=false
+              else
+                services_json="${services_json},\"${service_name}\""
+              fi
+              
+              service_count=$((service_count + 1))
+            else
+              echo "⏭️  Skipping root package.json: $package"
+            fi
+          done
+          
+          services_json="${services_json}]"
+          
+          # Output results
+          if [ "$service_count" -eq 0 ]; then
+            echo "❌ No services found!"
+            echo "Directory structure:"
+            find . -type d -maxdepth 2 | head -10
             echo "services=[]" >> $GITHUB_OUTPUT
             echo "service-count=0" >> $GITHUB_OUTPUT
           else
-            echo "services=$services" >> $GITHUB_OUTPUT
-            service_count=$(echo "$services" | jq 'length')
-            echo "service-count=$service_count" >> $GITHUB_OUTPUT
-            echo "Discovered $service_count services: $services"
+            echo "✅ services=$services_json" >> $GITHUB_OUTPUT
+            echo "✅ service-count=$service_count" >> $GITHUB_OUTPUT
+            echo "🎉 Discovered $service_count services: $services_json"
           fi
 
   build-and-upload:
@@ -105,13 +134,14 @@ jobs:
       - name: Verify build script exists
         working-directory: ${{ matrix.service }}
         run: |
+          echo "🔍 Checking for build script in ${{ matrix.service }}..."
           if ! npm run-script build --if-present --dry-run > /dev/null 2>&1; then
-            echo "Warning: No build script found for ${{ matrix.service }}"
+            echo "⚠️  Warning: No build script found for ${{ matrix.service }}"
             echo "Available scripts:"
             npm run
             echo "Continuing without build step..."
           else
-            echo "Build script found for ${{ matrix.service }}"
+            echo "✅ Build script found for ${{ matrix.service }}"
           fi
 
       - name: Build ${{ matrix.service }}
