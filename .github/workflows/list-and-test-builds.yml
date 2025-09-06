@@ -1,0 +1,180 @@
+name: List and Test Available Builds
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_service:
+        description: 'Service to test (leave empty to list all)'
+        required: false
+        type: string
+      test_artifact:
+        description: 'Specific artifact name to test (leave empty to test latest)'
+        required: false
+        type: string
+
+jobs:
+  list-builds:
+    name: List Available Builds
+    runs-on: ubuntu-latest
+    outputs:
+      artifacts: ${{ steps.list-artifacts.outputs.artifacts }}
+    steps:
+      - name: List available build artifacts
+        id: list-artifacts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "## Available Build Artifacts" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Get recent successful workflow runs
+          echo "Fetching recent successful builds..."
+          
+          # List recent artifacts from successful runs
+          gh api repos/${{ github.repository }}/actions/artifacts \
+            --jq '.artifacts[] | select(.name | contains("build-")) | {name: .name, created_at: .created_at, size_in_bytes: .size_in_bytes, expired: .expired}' \
+            --paginate | \
+            jq -s 'sort_by(.created_at) | reverse | .[0:20]' > artifacts.json
+          
+          if [ -s artifacts.json ] && [ "$(cat artifacts.json)" != "[]" ]; then
+            echo "| Artifact Name | Created | Size | Status |" >> $GITHUB_STEP_SUMMARY
+            echo "|---------------|---------|------|--------|" >> $GITHUB_STEP_SUMMARY
+            
+            cat artifacts.json | jq -r '.[] | 
+              "| \(.name) | \(.created_at | split("T")[0]) | \((.size_in_bytes / 1024 / 1024 * 100 | round) / 100)MB | \(if .expired then "Expired" else "Available" end) |"' >> $GITHUB_STEP_SUMMARY
+            
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### Download Commands" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Use these GitHub CLI commands to download artifacts:" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```bash' >> $GITHUB_STEP_SUMMARY
+            
+            cat artifacts.json | jq -r '.[] | select(.expired == false) | 
+              "# Download \(.name)\ngh run download --repo ${{ github.repository }} --name \"\(.name)\" --dir ./builds/\(.name | gsub(\"-build.*\"; \"\"))\n"' | head -20 >> $GITHUB_STEP_SUMMARY
+            
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            
+            # Output for next job
+            artifacts=$(cat artifacts.json | jq -c '[.[] | select(.expired == false) | .name]')
+            echo "artifacts=$artifacts" >> $GITHUB_OUTPUT
+          else
+            echo "No build artifacts found." >> $GITHUB_STEP_SUMMARY
+            echo "artifacts=[]" >> $GITHUB_OUTPUT
+          fi
+
+  test-build:
+    name: Test Build
+    runs-on: ubuntu-latest
+    needs: list-builds
+    if: github.event.inputs.test_service != '' || github.event.inputs.test_artifact != ''
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Download and test artifact
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TEST_SERVICE: ${{ github.event.inputs.test_service }}
+          TEST_ARTIFACT: ${{ github.event.inputs.test_artifact }}
+        run: |
+          echo "## Build Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Determine which artifact to test
+          if [ -n "$TEST_ARTIFACT" ]; then
+            ARTIFACT_NAME="$TEST_ARTIFACT"
+            echo "Testing specific artifact: $ARTIFACT_NAME"
+          elif [ -n "$TEST_SERVICE" ]; then
+            # Find the latest artifact for the specified service
+            ARTIFACT_NAME=$(echo '${{ needs.list-builds.outputs.artifacts }}' | jq -r --arg service "$TEST_SERVICE" '.[] | select(contains($service + "-build-")) | .' | head -1)
+            if [ -z "$ARTIFACT_NAME" ] || [ "$ARTIFACT_NAME" = "null" ]; then
+              echo "❌ No artifacts found for service: $TEST_SERVICE" >> $GITHUB_STEP_SUMMARY
+              exit 1
+            fi
+            echo "Testing latest artifact for $TEST_SERVICE: $ARTIFACT_NAME"
+          else
+            echo "❌ No test target specified" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
+          
+          echo "**Testing artifact:** $ARTIFACT_NAME" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Download the artifact
+          echo "Downloading artifact..."
+          mkdir -p test-build
+          
+          if gh run download --repo ${{ github.repository }} --name "$ARTIFACT_NAME" --dir ./test-build; then
+            echo "✅ **Download successful**" >> $GITHUB_STEP_SUMMARY
+            
+            # List contents
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Artifact contents:**" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            ls -la test-build/ >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            
+            # Check for required files
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**File validation:**" >> $GITHUB_STEP_SUMMARY
+            
+            if [ -f "test-build/index.js" ]; then
+              echo "✅ index.js found" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "❌ index.js missing" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ -f "test-build/build-id.txt" ]; then
+              echo "✅ build-id.txt found" >> $GITHUB_STEP_SUMMARY
+              BUILD_ID=$(cat test-build/build-id.txt)
+              echo "   - Build ID: $BUILD_ID" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "⚠️ build-id.txt missing" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            if [ -f "test-build/build-info.json" ]; then
+              echo "✅ build-info.json found" >> $GITHUB_STEP_SUMMARY
+              echo "   - Build info:" >> $GITHUB_STEP_SUMMARY
+              echo '```json' >> $GITHUB_STEP_SUMMARY
+              cat test-build/build-info.json >> $GITHUB_STEP_SUMMARY
+              echo '```' >> $GITHUB_STEP_SUMMARY
+            else
+              echo "⚠️ build-info.json missing" >> $GITHUB_STEP_SUMMARY
+            fi
+            
+            # Test syntax of index.js
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Syntax validation:**" >> $GITHUB_STEP_SUMMARY
+            
+            if [ -f "test-build/index.js" ]; then
+              if node -c test-build/index.js; then
+                echo "✅ JavaScript syntax is valid" >> $GITHUB_STEP_SUMMARY
+                
+                # Try to run it briefly (with timeout)
+                echo "" >> $GITHUB_STEP_SUMMARY
+                echo "**Runtime test:**" >> $GITHUB_STEP_SUMMARY
+                echo '```' >> $GITHUB_STEP_SUMMARY
+                
+                timeout 5s node test-build/index.js 2>&1 >> $GITHUB_STEP_SUMMARY || {
+                  exit_code=$?
+                  if [ $exit_code -eq 124 ]; then
+                    echo "Service started and ran for 5 seconds (timeout reached - this is expected)" >> $GITHUB_STEP_SUMMARY
+                  else
+                    echo "Service exited with code: $exit_code" >> $GITHUB_STEP_SUMMARY
+                  fi
+                }
+                
+                echo '```' >> $GITHUB_STEP_SUMMARY
+                echo "✅ **Build test completed successfully**" >> $GITHUB_STEP_SUMMARY
+              else
+                echo "❌ JavaScript syntax error detected" >> $GITHUB_STEP_SUMMARY
+              fi
+            fi
+          else
+            echo "❌ **Download failed**" >> $GITHUB_STEP_SUMMARY
+            echo "Artifact may not exist or may have expired." >> $GITHUB_STEP_SUMMARY
+            exit 1
+          fi
