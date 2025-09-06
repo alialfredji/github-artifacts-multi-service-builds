@@ -76,8 +76,8 @@ jobs:
             echo "services=[]" >> $GITHUB_OUTPUT
             echo "service-count=0" >> $GITHUB_OUTPUT
           else
-            echo "✅ services=$services_json" >> $GITHUB_OUTPUT
-            echo "✅ service-count=$service_count" >> $GITHUB_OUTPUT
+            echo "services=$services_json" >> $GITHUB_OUTPUT
+            echo "service-count=$service_count" >> $GITHUB_OUTPUT
             echo "🎉 Discovered $service_count services: $services_json"
           fi
           
