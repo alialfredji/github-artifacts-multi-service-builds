@@ -231,8 +231,11 @@ jobs:
       - name: Create build metadata
         working-directory: ${{ matrix.service }}
         run: |
+          # Sanitize branch name for safe file naming
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-' | tr ':' '-' | tr '<' '-' | tr '>' '-' | tr '|' '-' | tr '*' '-' | tr '?' '-' | tr '"' '-' | tr '\\' '-')
+          
           # Create build identifier
-          BUILD_ID="${{ github.ref_name }}-${{ github.sha }}"
+          BUILD_ID="${SAFE_BRANCH}-${{ github.sha }}"
           echo "$BUILD_ID" > dist/build-id.txt
           
           # Create build info
@@ -240,6 +243,7 @@ jobs:
           {
             "service": "${{ matrix.service }}",
             "branch": "${{ github.ref_name }}",
+            "branch_safe": "$SAFE_BRANCH",
             "commit": "${{ github.sha }}",
             "build_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
             "workflow_run": "${{ github.run_number }}",
@@ -271,7 +275,7 @@ jobs:
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.service }}-build-${{ github.ref_name }}-${{ github.sha }}
+          name: ${{ matrix.service }}-build-${{ github.run_number }}-${{ github.sha }}
           path: ${{ matrix.service }}/dist/
           retention-days: 30
           if-no-files-found: error
