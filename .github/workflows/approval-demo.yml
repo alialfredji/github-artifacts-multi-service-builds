@@ -1,65 +1,152 @@
 name: Approval Demo Workflow
 
 on:
-  push:
-    branches: [ main ]
   workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment for deployment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+        - staging
+        - production
+      service:
+        description: 'Service to deploy'
+        required: false
+        type: string
+      skip_approval:
+        description: 'Skip manual approval (for testing)'
+        required: false
+        default: false
+        type: boolean
+
+env:
+  TARGET_ENV: ${{ github.event.inputs.environment || 'staging' }}
 
 jobs:
-  step-1:
+  prepare:
+    name: Prepare Deployment
     runs-on: ubuntu-latest
+    outputs:
+      deployment-id: ${{ steps.generate-id.outputs.deployment-id }}
+      target-service: ${{ steps.determine-service.outputs.service }}
     steps:
-    - name: Step 1 - Initial Setup
-      run: |
-        echo "🚀 Step 1: Initial setup completed"
-        echo "Timestamp: $(date)"
-        echo "Branch: ${{ github.ref_name }}"
-        echo "Commit: ${{ github.sha }}"
-        
-  step-2:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Generate deployment ID
+        id: generate-id
+        run: |
+          DEPLOYMENT_ID="deploy-$(date +%Y%m%d-%H%M%S)-${{ github.run_number }}"
+          echo "deployment-id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+          echo "Generated deployment ID: $DEPLOYMENT_ID"
+
+      - name: Determine target service
+        id: determine-service
+        run: |
+          if [ -n "${{ github.event.inputs.service }}" ]; then
+            SERVICE="${{ github.event.inputs.service }}"
+          else
+            SERVICE="all-services"
+          fi
+          echo "service=$SERVICE" >> $GITHUB_OUTPUT
+          echo "Target service: $SERVICE"
+
+      - name: Validate deployment request
+        run: |
+          echo "Deployment Request Summary:"
+          echo "- Environment: ${{ env.TARGET_ENV }}"
+          echo "- Service: ${{ steps.determine-service.outputs.service }}"
+          echo "- Deployment ID: ${{ steps.generate-id.outputs.deployment-id }}"
+          echo "- Skip Approval: ${{ github.event.inputs.skip_approval }}"
+          echo "- Requester: ${{ github.actor }}"
+
+  approval:
+    name: Manual Approval
     runs-on: ubuntu-latest
-    needs: step-1
+    needs: prepare
+    if: github.event.inputs.skip_approval != 'true'
+    environment: 
+      name: ${{ github.event.inputs.environment || 'staging' }}
     steps:
-    - name: Step 2 - Data Processing
-      run: |
-        echo "📊 Step 2: Data processing started"
-        echo "Processing some data..."
-        sleep 2
-        echo "✅ Step 2: Data processing completed"
-        
-  step-3-approval:
+      - name: Wait for approval
+        run: |
+          echo "Waiting for manual approval for deployment:"
+          echo "- Deployment ID: ${{ needs.prepare.outputs.deployment-id }}"
+          echo "- Environment: ${{ env.TARGET_ENV }}"
+          echo "- Service: ${{ needs.prepare.outputs.target-service }}"
+          echo ""
+          echo "This step will pause until an authorized user approves the deployment."
+
+  deploy:
+    name: Deploy to ${{ github.event.inputs.environment || 'staging' }}
     runs-on: ubuntu-latest
-    needs: step-2
-    environment: manual-approval
+    needs: [prepare, approval]
+    if: always() && (needs.approval.result == 'success' || github.event.inputs.skip_approval == 'true')
     steps:
-    - name: Step 3 - Manual Approval Required
-      run: |
-        echo "⏸️  Step 3: Manual approval required"
-        echo "This step requires manual approval to continue"
-        echo "Please approve this deployment in the GitHub UI"
-        echo "You can add comments or reject if needed"
-        
-  step-4:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Simulate deployment
+        run: |
+          echo "Starting deployment..."
+          echo "- Deployment ID: ${{ needs.prepare.outputs.deployment-id }}"
+          echo "- Environment: ${{ env.TARGET_ENV }}"
+          echo "- Service: ${{ needs.prepare.outputs.target-service }}"
+          echo ""
+          
+          # Simulate deployment process
+          echo "Step 1: Preparing deployment package..."
+          sleep 2
+          
+          echo "Step 2: Validating target environment..."
+          sleep 1
+          
+          echo "Step 3: Deploying service(s)..."
+          sleep 3
+          
+          echo "Step 4: Running health checks..."
+          sleep 2
+          
+          echo "Deployment completed successfully!"
+
+      - name: Post-deployment verification
+        run: |
+          echo "Running post-deployment verification..."
+          echo "- Service health: OK"
+          echo "- Environment status: Active"
+          echo "- Deployment ID: ${{ needs.prepare.outputs.deployment-id }}"
+
+  notify:
+    name: Notify Results
     runs-on: ubuntu-latest
-    needs: step-3-approval
+    needs: [prepare, approval, deploy]
+    if: always()
     steps:
-    - name: Step 4 - Post-Approval Processing
-      run: |
-        echo "🎉 Step 4: Post-approval processing"
-        echo "Approval was granted! Continuing with deployment..."
-        echo "Running post-approval tasks..."
-        sleep 3
-        echo "✅ Step 4: Post-approval processing completed"
-        
-  step-5:
-    runs-on: ubuntu-latest
-    needs: step-4
-    steps:
-    - name: Step 5 - Final Deployment
-      run: |
-        echo "🚀 Step 5: Final deployment"
-        echo "All approvals received! Deploying to production..."
-        echo "Simulating deployment process..."
-        sleep 2
-        echo "✅ Step 5: Deployment completed successfully!"
-        echo "🎉 All steps completed with manual approval!"
+      - name: Generate deployment summary
+        run: |
+          echo "## Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Deployment ID:** ${{ needs.prepare.outputs.deployment-id }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Environment:** ${{ env.TARGET_ENV }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Service:** ${{ needs.prepare.outputs.target-service }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Requester:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Timestamp:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### Job Results" >> $GITHUB_STEP_SUMMARY
+          echo "- Preparation: ${{ needs.prepare.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Approval: ${{ needs.approval.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Deployment: ${{ needs.deploy.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.deploy.result }}" == "success" ]; then
+            echo "✅ **Deployment completed successfully!**" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.deploy.result }}" == "failure" ]; then
+            echo "❌ **Deployment failed. Check logs for details.**" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.approval.result }}" == "failure" ] || [ "${{ needs.approval.result }}" == "cancelled" ]; then
+            echo "⏹️ **Deployment cancelled - approval was not granted.**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Deployment status unknown.**" >> $GITHUB_STEP_SUMMARY
+          fi

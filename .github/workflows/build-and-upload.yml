@@ -1,68 +1,323 @@
-name: Build and Upload All Services
+name: Build and Upload Services
 
 on:
   push:
     branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
   workflow_dispatch:
     inputs:
       max_concurrent:
-        description: 'Maximum number of services to build in parallel (default: 5)'
+        description: 'Maximum number of services to build concurrently'
         required: false
         default: '5'
         type: string
 
+env:
+  NODE_VERSION: '20'
+
 jobs:
   discover-services:
+    name: Discover Services
     runs-on: ubuntu-latest
     outputs:
       services: ${{ steps.find-services.outputs.services }}
+      service-count: ${{ steps.find-services.outputs.service-count }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Find all services
-      id: find-services
-      run: |
-        # Find all directories that contain package.json files and create JSON array
-        SERVICES_JSON=$(find . -maxdepth 2 -name "package.json" -not -path "./node_modules/*" | sed 's|/package.json||' | sed 's|^\./||' | sort | jq -R -s -c 'split("\n")[:-1]')
-        echo "Found services: $SERVICES_JSON"
-        echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
-        
-  build-and-upload:
-    needs: discover-services
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Find all services
+        id: find-services
+        run: |
+          echo "🔍 Discovering services..."
+          echo "Current directory: $(pwd)"
+          echo "Directory contents:"
+          ls -la
+          
+          # Find all directories containing package.json (excluding root and node_modules)
+          services_json="["
+          service_count=0
+          first=true
+          
+          echo "Searching for package.json files..."
+          find_output=$(find . -name "package.json" -not -path "./node_modules/*" -not -path "./.git/*")
+          echo "Find command output:"
+          echo "$find_output"
+          
+          for package in $find_output; do
+            dir=$(dirname "$package")
+            echo "Processing package: $package, dir: $dir"
+            if [ "$dir" != "." ]; then
+              service_name=$(basename "$dir")
+              echo "✅ Found service: $service_name in $dir"
+              
+              # Add to JSON array
+              if [ "$first" = true ]; then
+                services_json="${services_json}\"${service_name}\""
+                first=false
+              else
+                services_json="${services_json},\"${service_name}\""
+              fi
+              
+              service_count=$((service_count + 1))
+            else
+              echo "⏭️  Skipping root package.json: $package"
+            fi
+          done
+          
+          services_json="${services_json}]"
+          
+          # Output results
+          if [ "$service_count" -eq 0 ]; then
+            echo "❌ No services found!"
+            echo "Directory structure:"
+            find . -type d -maxdepth 2 | head -10
+            echo "services=[]" >> $GITHUB_OUTPUT
+            echo "service-count=0" >> $GITHUB_OUTPUT
+          else
+            echo "services=$services_json" >> $GITHUB_OUTPUT
+            echo "service-count=$service_count" >> $GITHUB_OUTPUT
+            echo "🎉 Discovered $service_count services: $services_json"
+          fi
+          
+          echo "🔍 Debug: Final outputs being set:"
+          echo "GITHUB_OUTPUT contents:"
+          cat $GITHUB_OUTPUT
+          
+          # Validate JSON format
+          echo "🧪 Testing JSON validity:"
+          if echo "$services_json" | python3 -c "import sys, json; json.loads(sys.stdin.read()); print('✅ JSON is valid')" 2>/dev/null; then
+            echo "✅ Services JSON is valid and parseable"
+          else
+            echo "❌ Services JSON is invalid!"
+            echo "Raw JSON: '$services_json'"
+          fi
+
+  validate-matrix:
+    name: Validate Matrix Setup
     runs-on: ubuntu-latest
+    needs: discover-services
+    steps:
+      - name: Test matrix conditions and JSON parsing
+        run: |
+          echo "🧪 Testing matrix setup conditions..."
+          echo "Service count: '${{ needs.discover-services.outputs.service-count }}'"
+          echo "Services array: '${{ needs.discover-services.outputs.services }}'"
+          
+          # Test the condition logic
+          if [ "${{ needs.discover-services.outputs.service-count }}" != '0' ] && [ "${{ needs.discover-services.outputs.services }}" != '[]' ]; then
+            echo "✅ Condition check PASSED - build jobs should run"
+          else
+            echo "❌ Condition check FAILED - build jobs will be skipped"
+            echo "  - Service count is: '${{ needs.discover-services.outputs.service-count }}'"
+            echo "  - Services array is: '${{ needs.discover-services.outputs.services }}'"
+          fi
+          
+          # Test JSON parsing
+          echo "🔍 Testing fromJson() function..."
+          services='${{ needs.discover-services.outputs.services }}'
+          echo "Raw services: '$services'"
+          
+          # Simulate what GitHub Actions will do
+          if [ "$services" != "[]" ] && [ "$services" != "" ]; then
+            echo "✅ Services array is not empty, matrix should work"
+            echo "Matrix will include: $services"
+          else
+            echo "❌ Services array is empty or null"
+          fi
+
+  build-and-upload:
+    name: Build ${{ matrix.service }}
+    runs-on: ubuntu-latest
+    needs: discover-services
+    if: needs.discover-services.outputs.service-count > 0
     strategy:
+      fail-fast: false
+      max-parallel: ${{ fromJson(github.event.inputs.max_concurrent || '5') }}
       matrix:
         service: ${{ fromJson(needs.discover-services.outputs.services) }}
-      max-parallel: ${{ github.event_name == 'workflow_dispatch' && fromJSON(github.event.inputs.max_concurrent) || 5 }}
+    
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
-      with:
-        node-version: '20'
-        cache: 'npm'
-        
-    - name: Install dependencies
-      run: |
-        echo "Installing dependencies for ${{ matrix.service }}..."
-        cd ${{ matrix.service }}
-        npm ci
-        cd ..
-        
-    - name: Build service
-      run: |
-        echo "Building ${{ matrix.service }}..."
-        cd ${{ matrix.service }}
-        npm run build
-        echo "${{ matrix.service }}-build-${{ github.ref_name }}-${{ github.sha }}" > dist/build-id.txt
-        cd ..
-        
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ matrix.service }}-build-${{ github.ref_name }}-${{ github.sha }}
-        path: ${{ matrix.service }}/dist/
-        retention-days: 90
+      - name: Debug matrix inputs
+        run: |
+          echo "🔍 Debug: Matrix and job inputs"
+          echo "Service from matrix: '${{ matrix.service }}'"
+          echo "Service count from discovery: '${{ needs.discover-services.outputs.service-count }}'"
+          echo "Services array from discovery: '${{ needs.discover-services.outputs.services }}'"
+          echo "Max concurrent: '${{ github.event.inputs.max_concurrent || '5' }}'"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'npm'
+          cache-dependency-path: '${{ matrix.service }}/package*.json'
+
+      - name: Verify service directory exists
+        run: |
+          if [ ! -d "${{ matrix.service }}" ]; then
+            echo "Error: Service directory '${{ matrix.service }}' does not exist!"
+            exit 1
+          fi
+          if [ ! -f "${{ matrix.service }}/package.json" ]; then
+            echo "Error: package.json not found in '${{ matrix.service }}'"
+            exit 1
+          fi
+          echo "Service '${{ matrix.service }}' verified successfully"
+
+      - name: Install dependencies for ${{ matrix.service }}
+        working-directory: ${{ matrix.service }}
+        run: |
+          echo "Installing dependencies for ${{ matrix.service }}..."
+          
+          # Check if package-lock.json exists, if not, create it
+          if [ ! -f "package-lock.json" ]; then
+            echo "No package-lock.json found, running npm install to generate it..."
+            npm install --package-lock-only
+          fi
+          
+          # Install dependencies
+          npm ci --prefer-offline --no-audit --no-fund
+          
+          echo "Dependencies installed successfully"
+
+      - name: Verify build script exists
+        working-directory: ${{ matrix.service }}
+        run: |
+          echo "🔍 Checking for build script in ${{ matrix.service }}..."
+          if ! npm run-script build --if-present --dry-run > /dev/null 2>&1; then
+            echo "⚠️  Warning: No build script found for ${{ matrix.service }}"
+            echo "Available scripts:"
+            npm run
+            echo "Continuing without build step..."
+          else
+            echo "✅ Build script found for ${{ matrix.service }}"
+          fi
+
+      - name: Build ${{ matrix.service }}
+        working-directory: ${{ matrix.service }}
+        run: |
+          echo "🏗️ Building ${{ matrix.service }}..."
+          
+          # Ensure dist directory exists
+          mkdir -p dist
+          
+          # Run build if script exists
+          if npm run-script build --if-present --dry-run > /dev/null 2>&1; then
+            echo "Running npm build script..."
+            npm run build
+            echo "✅ Build completed successfully"
+          else
+            echo "⚠️ No build script found, creating basic dist structure..."
+            if [ -f "src/index.js" ]; then
+              cp src/index.js dist/
+              echo "✅ Copied src/index.js to dist/"
+            else
+              echo "console.log('${{ matrix.service }} service - built at $(date)');" > dist/index.js
+              echo "✅ Created basic dist/index.js"
+            fi
+          fi
+          
+          # Verify dist has content
+          if [ ! -f "dist/index.js" ]; then
+            echo "❌ ERROR: No index.js found in dist after build!"
+            exit 1
+          fi
+
+      - name: Create build metadata
+        working-directory: ${{ matrix.service }}
+        run: |
+          # Sanitize branch name for safe file naming
+          SAFE_BRANCH=$(echo "${{ github.ref_name }}" | tr '/' '-' | tr ':' '-' | tr '<' '-' | tr '>' '-' | tr '|' '-' | tr '*' '-' | tr '?' '-' | tr '"' '-' | tr '\\' '-')
+          
+          # Create build identifier
+          BUILD_ID="${SAFE_BRANCH}-${{ github.sha }}"
+          echo "$BUILD_ID" > dist/build-id.txt
+          
+          # Create build info
+          cat > dist/build-info.json << EOF
+          {
+            "service": "${{ matrix.service }}",
+            "branch": "${{ github.ref_name }}",
+            "branch_safe": "$SAFE_BRANCH",
+            "commit": "${{ github.sha }}",
+            "build_time": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "workflow_run": "${{ github.run_number }}",
+            "actor": "${{ github.actor }}"
+          }
+          EOF
+          
+          echo "Build metadata created:"
+          cat dist/build-info.json
+
+      - name: Verify build output
+        working-directory: ${{ matrix.service }}
+        run: |
+          echo "Verifying build output for ${{ matrix.service }}..."
+          if [ ! -d "dist" ]; then
+            echo "Error: dist directory not found!"
+            exit 1
+          fi
+          
+          echo "Contents of dist directory:"
+          ls -la dist/
+          
+          if [ ! -f "dist/index.js" ]; then
+            echo "Warning: dist/index.js not found"
+          fi
+          
+          echo "Build verification completed"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.service }}-build-${{ github.run_number }}-${{ github.sha }}
+          path: ${{ matrix.service }}/dist/
+          retention-days: 30
+          if-no-files-found: error
+
+  build-summary:
+    name: Build Summary
+    runs-on: ubuntu-latest
+    needs: [discover-services, validate-matrix, build-and-upload]
+    if: always()
+    steps:
+      - name: Generate build summary
+        run: |
+          echo "## 📋 Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Services discovered:** ${{ needs.discover-services.outputs.service-count }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Services:** ${{ needs.discover-services.outputs.services }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Build Time:** $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "### 🔍 Debug Information" >> $GITHUB_STEP_SUMMARY
+          echo "- Discovery job result: ${{ needs.discover-services.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Validation job result: ${{ needs.validate-matrix.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Build job result: ${{ needs.build-and-upload.result }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Service count: '${{ needs.discover-services.outputs.service-count }}'" >> $GITHUB_STEP_SUMMARY
+          echo "- Services array: '${{ needs.discover-services.outputs.services }}'" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ needs.build-and-upload.result }}" == "success" ]; then
+            echo "✅ **All builds completed successfully!**" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.build-and-upload.result }}" == "failure" ]; then
+            echo "❌ **Some builds failed. Check the logs above.**" >> $GITHUB_STEP_SUMMARY
+          elif [ "${{ needs.build-and-upload.result }}" == "skipped" ]; then
+            echo "⏭️ **Build jobs were skipped.**" >> $GITHUB_STEP_SUMMARY
+            if [ "${{ needs.discover-services.outputs.service-count }}" == "0" ]; then
+              echo "Reason: No services found to build." >> $GITHUB_STEP_SUMMARY
+            else
+              echo "Reason: Unknown - check the condition logic." >> $GITHUB_STEP_SUMMARY
+            fi
+          elif [ "${{ needs.discover-services.outputs.service-count }}" == "0" ]; then
+            echo "⚠️ **No services found to build.**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ **Build status unknown.**" >> $GITHUB_STEP_SUMMARY
+          fi
